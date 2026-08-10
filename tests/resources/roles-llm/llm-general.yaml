@@ -1,0 +1,7 @@
+model: gpt-5.6-terra
+options:
+  verbosity: low
+  reasoning_effort: medium
+system: |
+  Rewrite the prompt concisely, then answer it.
+  Keep answers short.

@@ -396,13 +396,7 @@ def _as_system_initial_prompt(text):
         return text
     return f">>> system\n\n{text}"
 
-def _parse_markdown_role_file(role_name, role_file_path):
-    with open(role_file_path, 'r', encoding='utf-8') as file:
-        content = file.read()
-
-    header, prompt = _parse_markdown_frontmatter(content, role_file_path)
-    sections = {}
-
+def _apply_role_header(sections, role_name, header):
     for key, value in header.items():
         section_name, parsed_key = _make_markdown_section_name(role_name, key)
         if not section_name in sections:
@@ -424,28 +418,180 @@ def _parse_markdown_role_file(role_name, role_file_path):
         else:
             sections[section_name][f"options.{parsed_key}"] = value
 
-    if prompt:
-        if not role_name in sections:
-            sections[role_name] = {}
-        parsed_prompt = _as_system_initial_prompt(prompt)
-        existing_initial_prompt = sections[role_name].get('options.initial_prompt', '').strip()
-        if existing_initial_prompt:
-            sections[role_name]['options.initial_prompt'] = f"{existing_initial_prompt}\n\n{parsed_prompt}"
-        else:
-            sections[role_name]['options.initial_prompt'] = parsed_prompt
+def _apply_role_prompt(sections, role_name, prompt):
+    if not prompt:
+        return
+    if not role_name in sections:
+        sections[role_name] = {}
+    parsed_prompt = _as_system_initial_prompt(prompt)
+    existing_initial_prompt = sections[role_name].get('options.initial_prompt', '').strip()
+    if existing_initial_prompt:
+        sections[role_name]['options.initial_prompt'] = f"{existing_initial_prompt}\n\n{parsed_prompt}"
+    else:
+        sections[role_name]['options.initial_prompt'] = parsed_prompt
 
+def _parse_markdown_role_file(role_name, role_file_path):
+    with open(role_file_path, 'r', encoding='utf-8') as file:
+        content = file.read()
+
+    header, prompt = _parse_markdown_frontmatter(content, role_file_path)
+    sections = {}
+    _apply_role_header(sections, role_name, header)
+    _apply_role_prompt(sections, role_name, prompt)
     return sections
 
-def _read_roles_from_markdown_directory(roles_dir_path):
-    markdown_files = sorted(glob.glob(os.path.join(roles_dir_path, '*.md')))
-    markdown_files += sorted(glob.glob(os.path.join(roles_dir_path, '*.markdown')))
+def _parse_llm_template_file(role_name, role_file_path):
+    """Parse simonw/llm template YAML into role sections.
 
+    Supported subset (stdlib only):
+      model: <id>
+      options:
+        key: value
+      system: |
+        multi-line system prompt
+      system: single-line prompt
+      prompt: optional user prompt template
+    """
+    try:
+        import yaml
+    except ImportError:
+        yaml = None
+
+    with open(role_file_path, 'r', encoding='utf-8') as file:
+        content = file.read()
+
+    data = None
+    if yaml is not None:
+        try:
+            data = yaml.safe_load(content)
+        except Exception:
+            data = None
+
+    if not isinstance(data, dict):
+        data = _parse_llm_template_subset(content, role_file_path)
+
+    if not isinstance(data, dict):
+        raise Exception(f"Invalid llm template role file: {role_file_path}")
+
+    sections = {role_name: {}}
+    header = {}
+
+    model = data.get('model')
+    if model is not None:
+        header['model'] = str(model)
+
+    options = data.get('options')
+    if isinstance(options, dict):
+        for key, value in options.items():
+            if value is None:
+                continue
+            header[f"options.{key}"] = str(value)
+
+    for key in ('provider', 'temperature', 'max_tokens', 'reasoning_effort', 'verbosity'):
+        if key in data and data[key] is not None and key not in header:
+            header[key] = str(data[key])
+
+    _apply_role_header(sections, role_name, header)
+
+    prompt = data.get('system')
+    if prompt is None:
+        prompt = data.get('prompt')
+    if isinstance(prompt, str):
+        if data.get('system') is not None:
+            _apply_role_prompt(sections, role_name, prompt)
+        else:
+            sections[role_name]['prompt'] = prompt.strip()
+    elif data.get('system') is not None:
+        _apply_role_prompt(sections, role_name, str(prompt))
+
+    # bare `prompt:` with system already set — keep as role prompt field
+    if isinstance(data.get('prompt'), str) and data.get('system') is not None:
+        sections[role_name]['prompt'] = data['prompt'].strip()
+
+    if not sections[role_name]:
+        # empty section not useful
+        del sections[role_name]
+    return sections
+
+def _parse_llm_template_subset(content, role_file_path):
+    """Minimal YAML subset for llm templates when PyYAML is unavailable."""
+    data = {}
+    lines = content.splitlines()
+    index = 0
+    while index < len(lines):
+        raw = lines[index]
+        if not raw.strip() or raw.lstrip().startswith('#'):
+            index += 1
+            continue
+        if re.match(r'^\s', raw):
+            raise Exception(f"Invalid llm template indentation in: {role_file_path}")
+        if ':' not in raw:
+            raise Exception(f"Invalid llm template line in: {role_file_path}: {raw}")
+        key, value = raw.split(':', 1)
+        key = key.strip()
+        value = value.strip()
+        if key == 'options' and value == '':
+            options = {}
+            index += 1
+            while index < len(lines):
+                option_line = lines[index]
+                if not option_line.strip():
+                    index += 1
+                    continue
+                if not re.match(r'^[ \t]', option_line):
+                    break
+                option_line = option_line.strip()
+                if option_line.startswith('#'):
+                    index += 1
+                    continue
+                if ':' not in option_line:
+                    raise Exception(f"Invalid options entry in: {role_file_path}")
+                option_key, option_value = option_line.split(':', 1)
+                options[option_key.strip()] = option_value.strip().strip('\'"')
+                index += 1
+            data['options'] = options
+            continue
+        if value in ('|', '>', '|-', '>-', '|+', '>+'):
+            block_lines = []
+            index += 1
+            while index < len(lines):
+                block_line = lines[index]
+                if block_line.strip() and not re.match(r'^[ \t]', block_line):
+                    break
+                block_lines.append(block_line)
+                index += 1
+            indents = []
+            for block_line in block_lines:
+                if block_line.strip():
+                    indents.append(len(block_line) - len(block_line.lstrip(' \t')))
+            min_indent = min(indents) if indents else 0
+            stripped = []
+            for block_line in block_lines:
+                if not block_line.strip():
+                    stripped.append('')
+                else:
+                    stripped.append(block_line[min_indent:])
+            data[key] = '\n'.join(stripped).strip('\n')
+            continue
+        data[key] = value.strip('\'"')
+        index += 1
+    return data
+
+def _read_roles_from_directory(roles_dir_path):
     roles = {}
-    for role_file_path in markdown_files:
+    role_files = []
+    for pattern in ('*.md', '*.markdown', '*.yaml', '*.yml'):
+        role_files += sorted(glob.glob(os.path.join(roles_dir_path, pattern)))
+
+    for role_file_path in role_files:
         if os.path.isdir(role_file_path):
             continue
         role_name = os.path.splitext(os.path.basename(role_file_path))[0]
-        role_sections = _parse_markdown_role_file(role_name, role_file_path)
+        extension = os.path.splitext(role_file_path)[1].lower()
+        if extension in ('.yaml', '.yml'):
+            role_sections = _parse_llm_template_file(role_name, role_file_path)
+        else:
+            role_sections = _parse_markdown_role_file(role_name, role_file_path)
         roles.update(role_sections)
     return roles
 
@@ -461,7 +607,7 @@ def read_role_files():
     roles = configparser.ConfigParser(interpolation=None)
     roles.read([default_roles_config_path])
     if os.path.isdir(roles_config_path):
-        roles.read_dict(_read_roles_from_markdown_directory(roles_config_path))
+        roles.read_dict(_read_roles_from_directory(roles_config_path))
     else:
         roles.read([roles_config_path])
     return roles

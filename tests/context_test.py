@@ -5,6 +5,7 @@ import os
 
 dirname = os.path.dirname(__file__)
 markdown_roles_dir = os.path.join(dirname, 'resources/roles-md')
+llm_roles_dir = os.path.join(dirname, 'resources/roles-llm')
 
 default_config = {
   "options": {
@@ -323,3 +324,34 @@ def test_markdown_role_prompt_with_percent_sign():
             'command_type': 'chat',
         })
         assert context['config']['options']['initial_prompt'] == '>>> system\n\nRewrite with 60 % fewer words.'
+
+def test_llm_yaml_template_role_mapping():
+    default_eval = vim.eval
+    with patch('vim.eval', side_effect=lambda cmd: llm_roles_dir if cmd == 'g:vim_ai_roles_config_file' else default_eval(cmd)):
+        context = make_ai_context({
+            'config_default': default_config,
+            'config_extension': {},
+            'user_instruction': '/llm-general hello',
+            'user_selection': '',
+            'command_type': 'chat',
+        })
+        actual_config = context['config']
+        assert actual_config['options']['model'] == 'gpt-5.6-terra'
+        assert actual_config['options']['verbosity'] == 'low'
+        assert actual_config['options']['reasoning_effort'] == 'medium'
+        assert actual_config['options']['initial_prompt'] == (
+            '>>> system\n\nRewrite the prompt concisely, then answer it.\nKeep answers short.'
+        )
+        assert context['prompt'] == 'hello'
+
+def test_llm_yaml_role_prompt_with_percent_sign():
+    default_eval = vim.eval
+    with patch('vim.eval', side_effect=lambda cmd: llm_roles_dir if cmd == 'g:vim_ai_roles_config_file' else default_eval(cmd)):
+        context = make_ai_context({
+            'config_default': default_config,
+            'config_extension': {},
+            'user_instruction': '/llm-percent hello',
+            'user_selection': '',
+            'command_type': 'chat',
+        })
+        assert context['config']['options']['initial_prompt'] == '>>> system\n\nMake this 60 % shorter.'
