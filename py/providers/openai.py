@@ -172,6 +172,15 @@ class OpenAIProvider():
             if key == 'max_completion_tokens' and value == 0:
                 continue
 
+            # Chat Completions rejects reasoning_effort=max (Responses-only).
+            # Same mapping as aichat: send xhigh on this endpoint.
+            if (
+                key == 'reasoning_effort'
+                and value == 'max'
+                and '/chat/completions' in (options.get('endpoint_url') or '')
+            ):
+                value = 'xhigh'
+
             result[key] = value
 
         return result

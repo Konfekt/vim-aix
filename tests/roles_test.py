@@ -5,6 +5,7 @@ import vim
 
 dirname = os.path.dirname(__file__)
 markdown_roles_dir = os.path.join(dirname, 'resources/roles-md')
+llm_roles_dir = os.path.join(dirname, 'resources/roles-llm')
 
 def test_role_completion():
     role_names = load_ai_role_names('complete')
@@ -49,3 +50,11 @@ def test_markdown_image_role_names():
     with patch('vim.eval', side_effect=lambda cmd: markdown_roles_dir if cmd == 'g:vim_ai_roles_config_file' else default_eval(cmd)):
         role_names = load_ai_role_names('image')
         assert 'markdown-image' in role_names
+
+def test_load_llm_yaml_roles_from_directory():
+    default_eval = vim.eval
+    with patch('vim.eval', side_effect=lambda cmd: llm_roles_dir if cmd == 'g:vim_ai_roles_config_file' else default_eval(cmd)):
+        role_names = load_ai_role_names('chat')
+        assert 'llm-general' in role_names
+        assert 'llm-code' in role_names
+        assert 'llm-percent' in role_names

@@ -173,13 +173,17 @@ Now you can select text and run it with command `:AIEdit /grammar`.
 You can also combine roles `:AI /o1-mini /grammar helo world!`
 
 Alternatively, `g:vim_ai_roles_config_file` can point to a directory.
-Each `*.md` file in that directory is loaded as one role, where the file name is the role name.
-Use markdown frontmatter to configure role options.
-The markdown body is added to `options.initial_prompt` as a `>>> system` block.
+Each role file name becomes the role name. Supported formats:
+
+- `*.md` / `*.markdown` — markdown with optional YAML frontmatter (body → system prompt)
+- `*.yaml` / `*.yml` — [simonw/llm](https://github.com/simonw/llm) templates (`model`, `options`, `system`)
 
 ```vim
 let g:vim_ai_roles_config_file = '/path/to/my/roles'
+" or llm templates directory, e.g. $XDG_CONFIG_HOME/llm/templates
 ```
+
+Markdown example:
 
 ```markdown
 ---
@@ -189,6 +193,16 @@ chat.max_tokens: 1200
 ---
 fix spelling and grammar
 ```
+
+llm template example:
+
+```yaml
+model: gpt-5.6-terra-medium
+system: |
+  fix spelling and grammar
+```
+
+Effort suffixes on the model id (`-low`, `-medium`, `-high`, `-xhigh`, `-max`) are stripped and become `options.reasoning_effort`. `options.reasoning_effort` still overrides when both are set. Chat Completions rejects `max`, so that endpoint sends `xhigh`.
 
 The example above maps to role config values:
 
