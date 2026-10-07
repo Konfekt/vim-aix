@@ -123,7 +123,7 @@ To use an AI command, type the command followed by an instruction prompt. You ca
 
 **Tip:** Use pre-defined roles `/right`, `/below`, `/tab` to choose how chat is open, e.g. `:AIC /right`
 
-**Tip:** `vim_ai#OpenLatestChatInTab()` shows the most recently used chat buffer in a tab, including a hidden or unlisted scratch. It returns 0 when no chat buffer exists.
+**Tip:** `vim_ai#OpenLatestChat()` shows the most recently used chat buffer using `ui.open_chat_command` (a split in the current tab by default). Hidden and unlisted scratch buffers are included. It returns 0 when none exists. `vim_ai#OpenLatestChatInTab()` uses `preset_tab`.
 
 **Tip:** Use special role `/populate` or `/populate-all` to show options in the chat header config, e.g. `:AIC /populate /gemini`
 

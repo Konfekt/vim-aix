@@ -68,6 +68,57 @@ qa!
         assert first != second
 
 
+def test_open_latest_chat_splits_in_current_tab():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        out_path = Path(tmpdir) / "result.txt"
+        repo = str(REPO_ROOT).replace("'", "''")
+        out = str(out_path).replace("'", "''")
+        script = f"""
+set nocompatible
+set nomore
+set hidden
+set shortmess+=I
+set rtp^={repo}
+
+enew
+setlocal buftype=nofile noswapfile bufhidden=hide filetype=aichat nobuflisted
+execute 'file' fnameescape('>>> AI chat')
+let chat = bufnr('%')
+
+enew
+let dummy = bufnr('%')
+let tabs_before = tabpagenr('$')
+
+try
+  let opened = vim_ai#OpenLatestChat()
+catch
+  let opened = 'ERROR: ' . v:exception
+endtry
+call writefile([
+      \\ string(opened),
+      \\ string(bufnr('%')),
+      \\ string(chat),
+      \\ string(dummy),
+      \\ string(tabpagenr('$')),
+      \\ string(tabs_before),
+      \\ string(winnr('$')),
+      \\ &filetype,
+      \\], '{out}')
+qa!
+"""
+        _run_headless_vim(script)
+
+        opened, current, chat, dummy, tabs, tabs_before, windows, filetype = (
+            out_path.read_text(encoding="utf-8").splitlines()
+        )
+        assert opened == "1"
+        assert current == chat
+        assert current != dummy
+        assert tabs == tabs_before
+        assert int(windows) >= 2
+        assert filetype == "aichat"
+
+
 def test_open_latest_chat_in_tab_shows_hidden_unlisted_buffer():
     with tempfile.TemporaryDirectory() as tmpdir:
         out_path = Path(tmpdir) / "result.txt"

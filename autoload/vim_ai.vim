@@ -59,35 +59,38 @@ function! vim_ai#GetLatestChatBufnr() abort
   return s:GetLastChatBufferNumber()
 endfunction
 
-function! s:ShowChatBufferInTab(bufnr) abort
-  let l:wins = win_findbuf(a:bufnr)
-  if !empty(l:wins)
-    let l:target = l:wins[0]
-    for l:winid in l:wins
-      if win_id2tabwin(l:winid)[0] == tabpagenr()
-        let l:target = l:winid
-        break
-      endif
-    endfor
-    call win_gotoid(l:target)
-  else
-    tabnew
-    let l:empty = bufnr('%')
-    execute 'buffer' a:bufnr
-    if l:empty != a:bufnr && bufexists(l:empty)
-      execute 'bwipeout' l:empty
+function! s:ShowChatBuffer(bufnr, open_conf) abort
+  for l:winid in win_findbuf(a:bufnr)
+    if win_id2tabwin(l:winid)[0] == tabpagenr()
+      call win_gotoid(l:winid)
+      call settabvar(tabpagenr(), 'vim_ai_chat_bufnr', a:bufnr)
+      return
     endif
+  endfor
+  let l:open_cmd = has_key(g:vim_ai_open_chat_presets, a:open_conf)
+        \ ? g:vim_ai_open_chat_presets[a:open_conf]
+        \ : a:open_conf
+  execute l:open_cmd
+  let l:empty = bufnr('%')
+  execute 'buffer' a:bufnr
+  if l:empty != a:bufnr && bufexists(l:empty)
+    execute 'bwipeout' l:empty
   endif
   call settabvar(tabpagenr(), 'vim_ai_chat_bufnr', a:bufnr)
 endfunction
 
-function! vim_ai#OpenLatestChatInTab() abort
+function! vim_ai#OpenLatestChat(...) abort
   let l:bufnr = s:GetLastChatBufferNumber()
   if l:bufnr == -1
     return 0
   endif
-  call s:ShowChatBufferInTab(l:bufnr)
+  let l:open_conf = a:0 ? a:1 : get(g:vim_ai_chat['ui'], 'open_chat_command', 'preset_below')
+  call s:ShowChatBuffer(l:bufnr, l:open_conf)
   return 1
+endfunction
+
+function! vim_ai#OpenLatestChatInTab() abort
+  return vim_ai#OpenLatestChat('preset_tab')
 endfunction
 
 function! s:GetTabLocalChatBufferNumber()

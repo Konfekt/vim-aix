@@ -15,4 +15,5 @@ vim-ai-config	vim-ai.txt	/*vim-ai-config*
 vim-ai-include	vim-ai.txt	/*vim-ai-include*
 vim-ai.txt	vim-ai.txt	/*vim-ai.txt*
 vim_ai#GetLatestChatBufnr()	vim-ai.txt	/*vim_ai#GetLatestChatBufnr()*
+vim_ai#OpenLatestChat()	vim-ai.txt	/*vim_ai#OpenLatestChat()*
 vim_ai#OpenLatestChatInTab()	vim-ai.txt	/*vim_ai#OpenLatestChatInTab()*
