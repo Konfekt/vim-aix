@@ -349,6 +349,16 @@ Examples how configure key bindings and customize commands: >
   " redo last AI command
   nnoremap <leader>r :AIRedo<CR>
 
+                                                *vim_ai#OpenLatestChatInTab()*
+vim_ai#OpenLatestChatInTab()        Show the most recently used aichat buffer
+                                    in a tab. Hidden and unlisted scratch
+                                    buffers are included. Returns 1 if a
+                                    buffer was shown, 0 if none exists.
+
+                                                *vim_ai#GetLatestChatBufnr()*
+vim_ai#GetLatestChatBufnr()         Buffer number of the most recently used
+                                    aichat buffer, or -1.
+
 CUSTOM COMMANDS
 
 To create custom commands, call `AIRun`, `AIEditRun` and `AIChatRun` functions: >

@@ -29,20 +29,70 @@ function! s:StartsWith(longer, shorter) abort
   return a:longer[0:len(a:shorter)-1] ==# a:shorter
 endfunction
 
-function! s:GetLastChatBufferNumber()
-  let l:chat_buffers = []
-  for l:buf in reverse(getbufinfo())
-    let l:bufname = bufname(l:buf.bufnr)
-    if l:buf.listed && s:StartsWith(l:bufname, s:scratch_buffer_name)
-      return l:buf.bufnr
+function! s:ScratchBufferName() abort
+  return get(g:, 'vim_ai_scratch_buffer_name', s:scratch_buffer_name)
+endfunction
+
+function! s:IsChatBuffer(buf) abort
+  if getbufvar(a:buf.bufnr, '&filetype') ==# 'aichat'
+    return 1
+  endif
+  return s:StartsWith(fnamemodify(a:buf.name, ':t'), s:ScratchBufferName())
+endfunction
+
+function! s:GetLastChatBufferNumber() abort
+  let l:latest_bufnr = -1
+  let l:latest_used = -1
+  for l:buf in getbufinfo()
+    if !s:IsChatBuffer(l:buf)
+      continue
+    endif
+    if l:buf.lastused >= l:latest_used
+      let l:latest_used = l:buf.lastused
+      let l:latest_bufnr = l:buf.bufnr
     endif
   endfor
-  return -1
+  return l:latest_bufnr
+endfunction
+
+function! vim_ai#GetLatestChatBufnr() abort
+  return s:GetLastChatBufferNumber()
+endfunction
+
+function! s:ShowChatBufferInTab(bufnr) abort
+  let l:wins = win_findbuf(a:bufnr)
+  if !empty(l:wins)
+    let l:target = l:wins[0]
+    for l:winid in l:wins
+      if win_id2tabwin(l:winid)[0] == tabpagenr()
+        let l:target = l:winid
+        break
+      endif
+    endfor
+    call win_gotoid(l:target)
+  else
+    tabnew
+    let l:empty = bufnr('%')
+    execute 'buffer' a:bufnr
+    if l:empty != a:bufnr && bufexists(l:empty)
+      execute 'bwipeout' l:empty
+    endif
+  endif
+  call settabvar(tabpagenr(), 'vim_ai_chat_bufnr', a:bufnr)
+endfunction
+
+function! vim_ai#OpenLatestChatInTab() abort
+  let l:bufnr = s:GetLastChatBufferNumber()
+  if l:bufnr == -1
+    return 0
+  endif
+  call s:ShowChatBufferInTab(l:bufnr)
+  return 1
 endfunction
 
 function! s:GetTabLocalChatBufferNumber()
   let l:chat_bufnr = gettabvar(tabpagenr(), 'vim_ai_chat_bufnr', -1)
-  if !bufexists(l:chat_bufnr) || !buflisted(l:chat_bufnr)
+  if !bufexists(l:chat_bufnr)
     return -1
   endif
   return l:chat_bufnr
@@ -98,15 +148,16 @@ function! s:OpenChatWindow(open_conf, force_new) abort
   else
     setlocal bufhidden=wipe
   endif
-  if bufexists(s:scratch_buffer_name)
+  let l:scratch_name = s:ScratchBufferName()
+  if bufexists(l:scratch_name)
     " spawn another window if chat already exist
     let l:index = 2
-    while bufexists(s:scratch_buffer_name . " " . l:index)
+    while bufexists(l:scratch_name . " " . l:index)
       let l:index += 1
     endwhile
-    execute "file " . s:scratch_buffer_name . " " . l:index
+    execute "file " . l:scratch_name . " " . l:index
   else
-    execute "file " . s:scratch_buffer_name
+    execute "file " . l:scratch_name
   endif
   " set tab local chat buffer number
   call settabvar(tabpagenr(), 'vim_ai_chat_bufnr', bufnr('%'))
@@ -320,7 +371,7 @@ function! s:ReuseOrCreateChatWindow(config)
 
     " reuse chat in active tab
     for l:bufnr in l:buffer_list_tab
-      if s:StartsWith(bufname(l:bufnr), s:scratch_buffer_name)
+      if s:StartsWith(fnamemodify(bufname(l:bufnr), ':t'), s:ScratchBufferName())
         call win_gotoid(bufwinid(l:bufnr))
         return
       endif

@@ -14,3 +14,5 @@ vim-ai-commands	vim-ai.txt	/*vim-ai-commands*
 vim-ai-config	vim-ai.txt	/*vim-ai-config*
 vim-ai-include	vim-ai.txt	/*vim-ai-include*
 vim-ai.txt	vim-ai.txt	/*vim-ai.txt*
+vim_ai#GetLatestChatBufnr()	vim-ai.txt	/*vim_ai#GetLatestChatBufnr()*
+vim_ai#OpenLatestChatInTab()	vim-ai.txt	/*vim_ai#OpenLatestChatInTab()*
