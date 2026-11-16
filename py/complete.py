@@ -1,4 +1,5 @@
 import vim
+import traceback
 
 complete_py_imported = True
 
@@ -8,7 +9,6 @@ def run_ai_completition(context):
     prompt = context['prompt']
     config = make_config(context['config'])
     config_options = config['options']
-    config_ui = config['ui']
     roles = context['roles']
 
     try:

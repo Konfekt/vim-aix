@@ -1,12 +1,13 @@
 import vim
 import datetime
 import os
+import traceback
 
 image_py_imported = True
 
 def make_image_path(ui):
-    download_dir = ui.get('download_dir', vim.eval('getcwd()'))
-    
+    download_dir = os.path.expanduser(ui.get('download_dir') or vim.eval('getcwd()'))
+
     try:
         utc = datetime.UTC  # Python 3.11+
     except AttributeError:

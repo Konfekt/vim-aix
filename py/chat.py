@@ -1,8 +1,8 @@
 import vim
 import threading
-import time
 import copy
 import json
+import re
 import traceback
 
 chat_py_imported = True
@@ -198,7 +198,7 @@ class AI_chat_job(threading.Thread):
                 try:
                     self.lines.append("")
                     self.lines.append(json.loads(e.read().decode())["error"]["message"])
-                except:
+                except Exception:
                     pass
         finally:
             with self.lock:
