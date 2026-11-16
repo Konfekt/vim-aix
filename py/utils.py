@@ -165,9 +165,10 @@ def parse_include_paths(path):
     return [path for path in expanded_paths if not os.path.isdir(path)]
 
 def make_image_message(path):
-    ext = path.split('.')[-1].lower()
+    ext = path.strip().split('.')[-1].lower()
+    mime_subtype = 'jpeg' if ext == 'jpg' else ext
     base64_image = encode_image(path)
-    return { 'type': 'image_url', 'image_url': { 'url': f"data:image/{ext};base64,{base64_image}" } }
+    return { 'type': 'image_url', 'image_url': { 'url': f"data:image/{mime_subtype};base64,{base64_image}" } }
 
 def make_text_file_message(path):
     file_content_start = f'==> {path} <==\n'
@@ -291,11 +292,15 @@ def vim_break_undo_sequence():
     # breaks undo sequence (https://vi.stackexchange.com/a/29087)
     vim.command("let &ul=&ul")
 
+def vim_string_literal(text):
+    # single-quoted Vim string; a line break would end the Ex command
+    text = ' '.join(str(text).splitlines())
+    return "'" + text.replace("'", "''") + "'"
+
 def print_info_message(msg):
-    escaped_msg = msg.replace("'", "`")
     vim.command("redraw")
     vim.command("echohl ErrorMsg")
-    vim.command(f"echomsg '{escaped_msg}'")
+    vim.command("echomsg " + vim_string_literal(msg))
     vim.command("echohl None")
 
 def parse_error_message(error):
@@ -375,12 +380,18 @@ _MODEL_REASONING_EFFORT_SUFFIXES = (
     ('-max', 'max'),
 )
 
+def _registered_provider_names():
+    providers = vim.eval("keys(get(g:, 'vim_ai_providers', {}))")
+    return providers if isinstance(providers, list) else []
+
 def _parse_model_header_value(value):
     parsed_provider = ''
     parsed_model = value.strip()
 
+    # `provider:model`; only a registered provider counts as prefix so that
+    # model tags such as `llama3:8b` stay intact
     provider_match = re.match(r'^([a-zA-Z0-9_-]+):(.*)$', parsed_model)
-    if provider_match:
+    if provider_match and provider_match.group(1) in _registered_provider_names():
         parsed_provider = provider_match.group(1)
         parsed_model = provider_match.group(2).strip()
 

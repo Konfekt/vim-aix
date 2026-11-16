@@ -175,7 +175,9 @@ function! vim_ai_config#ExtendDeep(defaults, override) abort
 endfunction
 
 function! s:MakeConfig(config_name) abort
-  let l:defaults = copy(g:[a:config_name . "_default"])
+  " deepcopy: ExtendDeep() merges into nested dicts, which must not change
+  " the *_default dicts (chat.py compares options against them)
+  let l:defaults = deepcopy(g:[a:config_name . "_default"])
   let l:override = exists("g:" . a:config_name) ? g:[a:config_name] : {}
   let g:[a:config_name] = vim_ai_config#ExtendDeep(l:defaults, l:override)
 endfunction

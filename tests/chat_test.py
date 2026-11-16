@@ -325,7 +325,7 @@ def test_parse_include_image_message():
                 {
                     'type': 'image_url',
                     'image_url': {
-                        'url': 'data:image/jpg;base64,aW1hZ2UgZGF0YQo='
+                        'url': 'data:image/jpeg;base64,aW1hZ2UgZGF0YQo='
                     },
                 },
             ],
@@ -352,7 +352,7 @@ def test_parse_include_image_with_files_message():
                 {
                     'type': 'image_url',
                     'image_url': {
-                        'url': 'data:image/jpg;base64,aW1hZ2UgZGF0YQo='
+                        'url': 'data:image/jpeg;base64,aW1hZ2UgZGF0YQo='
                     },
                 },
                 {
