@@ -75,3 +75,44 @@ def test_responses_endpoint_keeps_max_reasoning_effort():
     provider = _provider({'reasoning_effort': 'max', 'endpoint_url': 'https://api.openai.com/v1/responses'})
     result = provider._make_openai_options(provider.options)
     assert result['reasoning_effort'] == 'max'
+
+
+class _FakeResponse:
+    def __init__(self, lines):
+        self.lines = lines
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+    def __iter__(self):
+        return iter(self.lines)
+
+
+def test_stream_parses_last_event_without_trailing_newline():
+    provider = _provider({'auth_type': 'none'})
+    provider.utils.get_proxy_settings.return_value = None
+    lines = [
+        b'data: {"choices": [{"delta": {"content": "a"}}]}\r\n',
+        b'\n',
+        b'data: \n',
+        b'data: {"choices": [{"delta": {"content": "b"}}]}',
+    ]
+    with patch.object(openai.urllib.request, 'urlopen', return_value=_FakeResponse(lines)):
+        chunks = list(provider.request([{'role': 'user', 'content': [{'type': 'text', 'text': 'hi'}]}]))
+    assert [c['content'] for c in chunks] == ['a', 'b']
+
+
+def test_stream_stops_at_done_marker():
+    provider = _provider({'auth_type': 'none'})
+    provider.utils.get_proxy_settings.return_value = None
+    lines = [
+        b'data: {"choices": [{"delta": {"content": "a"}}]}\n',
+        b'data: [DONE]\n',
+        b'data: not json\n',
+    ]
+    with patch.object(openai.urllib.request, 'urlopen', return_value=_FakeResponse(lines)):
+        chunks = list(provider.request([{'role': 'user', 'content': [{'type': 'text', 'text': 'hi'}]}]))
+    assert [c['content'] for c in chunks] == ['a']

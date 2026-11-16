@@ -12,6 +12,8 @@ def eval(cmd):
             return os.path.abspath(os.path.join(dirname, '../..'))
         case 'getcwd()':
             return os.path.abspath(os.path.join(dirname, '../..'))
+        case "keys(get(g:, 'vim_ai_providers', {}))":
+            return ['openai']
         case 'g:LoadToken()':
             return 'fn.secret'
         case _:

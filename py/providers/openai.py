@@ -252,9 +252,9 @@ class OpenAIProvider():
             for line_bytes in response:
                 line = line_bytes.decode("utf-8", errors="replace")
                 if line.startswith(RESP_DATA_PREFIX):
-                    line_data = line[len(RESP_DATA_PREFIX):-1]
-                    if line_data.strip() == RESP_DONE:
-                        pass
-                    else:
-                        openai_obj = json.loads(line_data)
-                        yield openai_obj
+                    line_data = line[len(RESP_DATA_PREFIX):].strip()
+                    if line_data == RESP_DONE:
+                        break
+                    if not line_data:
+                        continue
+                    yield json.loads(line_data)

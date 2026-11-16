@@ -98,7 +98,7 @@ def run_ai_chat(context):
 
     chat_config = parse_chat_header_config()
     options = {**config_options, **chat_config['options']}
-    provider = chat_config['provider'] or config['provider']
+    provider_name = chat_config['provider'] or config['provider']
 
     initial_prompt = '\n'.join(options.get('initial_prompt', []))
     initial_messages = parse_chat_messages(initial_prompt)
@@ -120,7 +120,7 @@ def run_ai_chat(context):
 
             print('Answering...')
             vim.command("redraw")
-            provider_class = load_provider(provider)
+            provider_class = load_provider(provider_name)
             provider = provider_class(command_type, options, ai_provider_utils)
 
             if vim.eval("g:vim_ai_async_chat") == "1":
@@ -147,8 +147,9 @@ def run_ai_chat(context):
         else:
             return False
     except BaseException as error:
-        handle_completion_error(provider, error)
+        handle_completion_error(provider_name, error)
         print_debug("[{}] error: {}", command_type, traceback.format_exc())
+        return False
 
 
 # wraps the AI chat job, shall be unique to a buffer
@@ -189,6 +190,9 @@ class AI_chat_job(threading.Thread):
                         break # Exit the loop
         except Exception as e:
             with self.lock:
+                # flush the partial answer line before the error report
+                self.lines.append(self.buffer)
+                self.buffer = ""
                 self.lines.append("")
                 self.lines.append(f"<<< error getting response: {str(e)}")
                 self.lines.append("")

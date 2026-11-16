@@ -105,3 +105,24 @@ def test_markdown_explicit_reasoning_effort_wins_over_model_suffix(tmp_path):
         'options.reasoning_effort': 'low',
         'options.initial_prompt': '>>> system\n\nbe brief',
     }
+
+
+def test_print_info_message_keeps_quotes_and_joins_lines():
+    from utils import print_info_message
+    commands = []
+    with patch.object(vim, 'command', side_effect=commands.append):
+        print_info_message("it's\nbroken")
+    assert "echomsg 'it''s broken'" in commands
+
+
+def test_image_message_uses_jpeg_mime_type_for_jpg():
+    from utils import make_image_message
+    message = make_image_message(os.path.join(dirname, 'resources', 'image_file.jpg'))
+    assert message['image_url']['url'].startswith('data:image/jpeg;base64,')
+
+
+def test_model_header_only_splits_registered_provider_prefix():
+    from utils import _parse_model_header_value
+    assert _parse_model_header_value('openai:gpt-5.2-high') == ('openai', 'gpt-5.2', 'high')
+    assert _parse_model_header_value('llama3:8b') == ('', 'llama3:8b', '')
+    assert _parse_model_header_value('qwen2.5:7b-instruct') == ('', 'qwen2.5:7b-instruct', '')

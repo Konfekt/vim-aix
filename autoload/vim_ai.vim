@@ -22,7 +22,7 @@ let s:chat_redraw_interval = 250 " milliseconds
 function! s:ImportPythonModules()
   for py_module in ['types', 'utils', 'context', 'chat', 'complete', 'roles', 'image']
     if !py3eval("'" . py_module . "_py_imported' in globals()")
-      execute "py3file " . s:plugin_root . "/py/" . py_module . ".py"
+      execute 'py3file' fnameescape(s:plugin_root . '/py/' . py_module . '.py')
     endif
   endfor
 endfunction
@@ -65,6 +65,19 @@ function! s:OpenCommand(open_conf) abort
   return get(g:vim_ai_open_chat_presets, a:open_conf, a:open_conf)
 endfunction
 
+" Wipes the empty buffer an open command such as `below new` created, after
+" the window switched to {bufnr}. Never touches a buffer the user had open
+" (e.g. when the command is a plain `split`) or one that has content.
+function! s:WipePlaceholder(placeholder, bufnr) abort
+  if a:placeholder != a:bufnr && bufexists(a:placeholder)
+        \ && empty(bufname(a:placeholder))
+        \ && !getbufvar(a:placeholder, '&modified')
+        \ && getbufline(a:placeholder, 1, '$') ==# ['']
+        \ && empty(win_findbuf(a:placeholder))
+    execute 'bwipeout' a:placeholder
+  endif
+endfunction
+
 function! s:ShowChatBuffer(bufnr, open_conf) abort
   for l:winid in win_findbuf(a:bufnr)
     if win_id2tabwin(l:winid)[0] == tabpagenr()
@@ -76,14 +89,7 @@ function! s:ShowChatBuffer(bufnr, open_conf) abort
   execute s:OpenCommand(a:open_conf)
   let l:placeholder = bufnr('%')
   execute 'buffer' a:bufnr
-  " Only wipe the empty buffer created by the open command, never a buffer
-  " the user had open (e.g. when the command is a plain `split`).
-  if l:placeholder != a:bufnr && bufexists(l:placeholder)
-        \ && empty(bufname(l:placeholder))
-        \ && !getbufvar(l:placeholder, '&modified')
-        \ && empty(win_findbuf(l:placeholder))
-    execute 'bwipeout' l:placeholder
-  endif
+  call s:WipePlaceholder(l:placeholder, a:bufnr)
   call settabvar(tabpagenr(), 'vim_ai_chat_bufnr', a:bufnr)
 endfunction
 
@@ -135,14 +141,11 @@ function! s:OpenChatWindow(open_conf, force_new) abort
   let l:keep_open = g:vim_ai_chat['ui']['scratch_buffer_keep_open'] == '1'
   let l:reused_chat_buffer_name = s:GetReusedChatBufferNumber()
   if l:keep_open && l:reused_chat_buffer_name != -1 && !a:force_new
-    let l:current_buffer = bufnr('%')
+    let l:placeholder = bufnr('%')
     " reuse chat buffer
-    execute "buffer " . l:reused_chat_buffer_name
-    " close new buffer that was created by l:open_cmd
-    if bufloaded(l:current_buffer)
-        " if `hidden` is turned off, the buffer is unloaded automatically
-        execute "bd " . l:current_buffer
-    endif
+    execute 'buffer' l:reused_chat_buffer_name
+    " close the new buffer that was created by the open command
+    call s:WipePlaceholder(l:placeholder, l:reused_chat_buffer_name)
     " set tab local chat buffer number
     call settabvar(tabpagenr(), 'vim_ai_chat_bufnr', bufnr('%'))
     return
@@ -413,12 +416,23 @@ function! s:AIChatUndoCleanup()
     execute 'normal! j'
     " copy whole assistant message to the `d` register
     execute 'normal! "dyG'
-    " undo until user message
+    " undo until user message; stop when undo makes no progress (history
+    " exhausted, e.g. a long answer with a low 'undolevels')
+    let l:answer_changenr = changenr()
     while line('$') > l:chat_initiation_line
-      execute "normal! u"
+      let l:changenr = changenr()
+      silent! execute "normal! u"
+      if changenr() >= l:changenr
+        break
+      endif
     endwhile
-    " paste assistant message as a whole
-    execute 'normal! "dp'
+    if line('$') > l:chat_initiation_line
+      " could not undo back to the user message: restore the full answer
+      silent! execute 'undo' l:answer_changenr
+    else
+      " paste assistant message as a whole
+      execute 'normal! "dp'
+    endif
     execute l:current_line_num
   finally
     call setreg('d', l:saved_register[0], l:saved_register[1])
@@ -544,6 +558,10 @@ endfunction
 
 " Repeat last AI command
 function! vim_ai#AIRedoRun() abort
+  if empty(s:last_command)
+    echohl ErrorMsg | echomsg 'vim-ai: no AI command to redo' | echohl None
+    return
+  endif
   if s:last_command !=# "image"
     undo
   endif
