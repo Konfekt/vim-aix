@@ -1,31 +1,7 @@
-import shutil
-import subprocess
 import tempfile
 from pathlib import Path
 
-import pytest
-
-
-REPO_ROOT = Path(__file__).resolve().parents[1]
-
-
-def _find_vim():
-    return shutil.which("vim") or shutil.which("nvim")
-
-
-def _run_headless_vim(script):
-    vim_bin = _find_vim()
-    if vim_bin is None:
-        pytest.skip("vim or nvim executable not available")
-
-    with tempfile.TemporaryDirectory() as tmpdir:
-        script_path = Path(tmpdir) / "test.vim"
-        script_path.write_text(script, encoding="utf-8")
-        subprocess.run(
-            [vim_bin, "-Nu", "NONE", "-nEs", "-S", str(script_path)],
-            check=True,
-            cwd=REPO_ROOT,
-        )
+from conftest import REPO_ROOT, run_headless_vim
 
 
 def test_latest_chat_bufnr_is_most_recently_used_unlisted_aichat():
@@ -61,7 +37,7 @@ endtry
 call writefile([string(first), string(second), string(got)], '{out}')
 qa!
 """
-        _run_headless_vim(script)
+        run_headless_vim(script)
 
         first, second, got = out_path.read_text(encoding="utf-8").splitlines()
         assert got == first
@@ -106,7 +82,7 @@ call writefile([
       \\], '{out}')
 qa!
 """
-        _run_headless_vim(script)
+        run_headless_vim(script)
 
         opened, current, chat, dummy, tabs, tabs_before, windows, filetype = (
             out_path.read_text(encoding="utf-8").splitlines()
@@ -154,7 +130,7 @@ call writefile([
       \\], '{out}')
 qa!
 """
-        _run_headless_vim(script)
+        run_headless_vim(script)
 
         opened, current, chat, dummy, tabs, filetype = out_path.read_text(
             encoding="utf-8"
@@ -164,3 +140,37 @@ qa!
         assert current != dummy
         assert int(tabs) >= 2
         assert filetype == "aichat"
+
+
+def test_open_latest_chat_with_plain_split_keeps_user_buffer():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        out_path = Path(tmpdir) / "result.txt"
+        repo = str(REPO_ROOT).replace("'", "''")
+        out = str(out_path).replace("'", "''")
+        script = f"""
+set nocompatible
+set nomore
+set hidden
+set shortmess+=I
+set rtp^={repo}
+
+enew
+setlocal buftype=nofile noswapfile bufhidden=hide filetype=aichat nobuflisted
+execute 'file' fnameescape('>>> AI chat')
+let chat = bufnr('%')
+
+enew
+call setline(1, 'user text')
+let user = bufnr('%')
+
+let opened = vim_ai#OpenLatestChat('split')
+call writefile([
+      \\ string(opened),
+      \\ string(bufnr('%') == chat),
+      \\ string(bufexists(user)),
+      \\], '{out}')
+qa!
+"""
+        run_headless_vim(script)
+
+        assert out_path.read_text(encoding="utf-8").splitlines() == ["1", "1", "1"]

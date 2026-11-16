@@ -1,32 +1,8 @@
 import json
-import shutil
-import subprocess
 import tempfile
 from pathlib import Path
 
-import pytest
-
-
-REPO_ROOT = Path(__file__).resolve().parents[1]
-
-
-def _find_vim():
-    return shutil.which("vim") or shutil.which("nvim")
-
-
-def _run_headless_vim(script):
-    vim_bin = _find_vim()
-    if vim_bin is None:
-        pytest.skip("vim or nvim executable not available")
-
-    with tempfile.TemporaryDirectory() as tmpdir:
-        script_path = Path(tmpdir) / "test.vim"
-        script_path.write_text(script, encoding="utf-8")
-        subprocess.run(
-            [vim_bin, "-Nu", "NONE", "-nEs", "-S", str(script_path)],
-            check=True,
-            cwd=REPO_ROOT,
-        )
+from conftest import REPO_ROOT, run_headless_vim
 
 
 def test_visual_selection_detection_does_not_leak_into_explicit_ranges():
@@ -53,7 +29,7 @@ let visual_range_result = vim_ai#IsVisualSelectionRange(1, 1, 1, "'<,'>Probe")
 call writefile([string(explicit_range_result), string(visual_range_result)], '{out}')
 qa!
 """
-        _run_headless_vim(script)
+        run_headless_vim(script)
 
         results = out_path.read_text(encoding="utf-8").splitlines()
         assert results == ["0", "1"]
@@ -102,7 +78,7 @@ call vim_ai#AIRedoRun()
 py3 Path('{out}').write_text(json.dumps(records), encoding='utf-8')
 qa!
 """
-        _run_headless_vim(script)
+        run_headless_vim(script, python=True)
 
         results = json.loads(out_path.read_text(encoding="utf-8"))
         assert results == [
@@ -117,3 +93,84 @@ qa!
                 "command_type": "image",
             },
         ]
+
+
+_MOCK_PYTHON = """
+py3 << PY
+import json
+from pathlib import Path
+import vim
+records = []
+for name in ['types', 'utils', 'context', 'chat', 'complete', 'roles', 'image']:
+    globals()[f'{name}_py_imported'] = True
+
+def unwrap(expr):
+    return vim.eval(expr)
+
+def make_ai_context(config_input):
+    records.append(config_input['user_selection'])
+    return {'config': {'ui': {'paste_mode': '0'}}, 'prompt': ''}
+
+def run_ai_image(context):
+    pass
+
+def load_ai_role_names(command_type):
+    return ['grammar', 'c++', 'quo"te']
+PY
+"""
+
+
+def test_visual_selection_keeps_multibyte_last_character():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        out_path = Path(tmpdir) / "result.txt"
+        repo = str(REPO_ROOT).replace("'", "''")
+        out = str(out_path).replace("'", "''")
+        script = f"""
+set nocompatible
+set nomore
+set encoding=utf-8
+set rtp^={repo}
+call vim_ai#AIUtilSetDebug(0)
+{_MOCK_PYTHON}
+new
+call setline(1, ['xäöüy'])
+" select äöü (byte columns 2 to 6)
+call setpos("'<", [0, 1, 2, 0])
+call setpos("'>", [0, 1, 6, 0])
+call histadd(':', "'<,'>AIImage")
+1,1call vim_ai#AIImageRun(2, {{}}, '')
+py3 Path('{out}').write_text(json.dumps(records), encoding='utf-8')
+qa!
+"""
+        run_headless_vim(script, python=True)
+
+        assert json.loads(out_path.read_text(encoding="utf-8")) == ["äöü"]
+
+
+def test_role_completion_matches_literal_prefix():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        out_path = Path(tmpdir) / "result.txt"
+        repo = str(REPO_ROOT).replace("'", "''")
+        out = str(out_path).replace("'", "''")
+        script = f"""
+set nocompatible
+set nomore
+set encoding=utf-8
+set rtp^={repo}
+{_MOCK_PYTHON}
+let results = {{}}
+for prefix in ['/', '/c+', '/quo"', '/.', 'grammar']
+  let results[prefix] = vim_ai#RoleCompletionChat(prefix, '', 0)
+endfor
+call writefile([json_encode(results)], '{out}')
+qa!
+"""
+        run_headless_vim(script, python=True)
+
+        assert json.loads(out_path.read_text(encoding="utf-8")) == {
+            "/": ["/grammar", "/c++", '/quo"te'],
+            "/c+": ["/c++"],
+            '/quo"': ['/quo"te'],
+            "/.": [],
+            "grammar": [],
+        }

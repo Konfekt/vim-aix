@@ -1,3 +1,5 @@
+scriptencoding utf-8
+
 call vim_ai_config#load()
 
 let s:plugin_root = expand('<sfile>:p:h:h')
@@ -59,6 +61,10 @@ function! vim_ai#GetLatestChatBufnr() abort
   return s:GetLastChatBufferNumber()
 endfunction
 
+function! s:OpenCommand(open_conf) abort
+  return get(g:vim_ai_open_chat_presets, a:open_conf, a:open_conf)
+endfunction
+
 function! s:ShowChatBuffer(bufnr, open_conf) abort
   for l:winid in win_findbuf(a:bufnr)
     if win_id2tabwin(l:winid)[0] == tabpagenr()
@@ -67,14 +73,16 @@ function! s:ShowChatBuffer(bufnr, open_conf) abort
       return
     endif
   endfor
-  let l:open_cmd = has_key(g:vim_ai_open_chat_presets, a:open_conf)
-        \ ? g:vim_ai_open_chat_presets[a:open_conf]
-        \ : a:open_conf
-  execute l:open_cmd
-  let l:empty = bufnr('%')
+  execute s:OpenCommand(a:open_conf)
+  let l:placeholder = bufnr('%')
   execute 'buffer' a:bufnr
-  if l:empty != a:bufnr && bufexists(l:empty)
-    execute 'bwipeout' l:empty
+  " Only wipe the empty buffer created by the open command, never a buffer
+  " the user had open (e.g. when the command is a plain `split`).
+  if l:placeholder != a:bufnr && bufexists(l:placeholder)
+        \ && empty(bufname(l:placeholder))
+        \ && !getbufvar(l:placeholder, '&modified')
+        \ && empty(win_findbuf(l:placeholder))
+    execute 'bwipeout' l:placeholder
   endif
   call settabvar(tabpagenr(), 'vim_ai_chat_bufnr', a:bufnr)
 endfunction
@@ -121,10 +129,7 @@ endfunction
 "   - keeps the buffer in the buffer list
 function! s:OpenChatWindow(open_conf, force_new) abort
   " open new buffer that will be used as a chat
-  let l:open_cmd = has_key(g:vim_ai_open_chat_presets, a:open_conf)
-        \ ? g:vim_ai_open_chat_presets[a:open_conf]
-        \ : a:open_conf
-  execute l:open_cmd
+  execute s:OpenCommand(a:open_conf)
 
   " reuse chat in keep-open mode
   let l:keep_open = g:vim_ai_chat['ui']['scratch_buffer_keep_open'] == '1'
@@ -209,9 +214,15 @@ function! s:GetVisualSelection()
   if len(lines) == 0
     return ''
   endif
-  " The exclusive mode means that the last character of the selection area is not included in the operation scope.
-  let lines[-1] = lines[-1][: column_end - (&selection == 'inclusive' ? 1 : 2)]
-  let lines[0] = lines[0][column_start - 1:]
+  " With 'selection' exclusive the character under the end mark is not
+  " selected. Otherwise include all bytes of that (possibly multibyte)
+  " character. column_end is huge for a linewise `$` selection.
+  let l:end = column_end - 1
+  if &selection !=# 'exclusive'
+    let l:end += len(matchstr(lines[-1], '.', l:end))
+  endif
+  let lines[-1] = strpart(lines[-1], 0, l:end)
+  let lines[0] = strpart(lines[0], column_start - 1)
   return join(lines, "\n")
 endfunction
 
@@ -240,30 +251,28 @@ function! vim_ai#IsVisualSelectionRange(uses_range, line_start, line_end, ...) a
   return call(function('s:IsVisualSelectionRange'), [a:uses_range, a:line_start, a:line_end] + a:000)
 endfunction
 
-" Complete prompt
-" - uses_range   - truty if range passed
-" - config       - function scoped vim_ai_complete config
-" - a:1          - optional instruction prompt
-function! vim_ai#AIRun(uses_range, config, ...) range abort
+" Builds the context for complete/edit/image commands and remembers the
+" invocation for :AIRedo. Returns a dict with context, is_selection,
+" firstline and lastline.
+function! s:PrepareRun(command_type, config_default, uses_range, config, args, line1, line2) abort
   call s:ImportPythonModules()
-  let l:instruction = a:0 > 0 ? a:1 : ""
-  let l:firstline = s:redo_selection_hint >= 0 ? s:redo_firstline : a:firstline
-  let l:lastline = s:redo_selection_hint >= 0 ? s:redo_lastline : a:lastline
+  let l:instruction = get(a:args, 0, '')
+  let l:firstline = s:redo_selection_hint >= 0 ? s:redo_firstline : a:line1
+  let l:lastline = s:redo_selection_hint >= 0 ? s:redo_lastline : a:line2
   let l:is_selection = s:IsVisualSelectionRange(a:uses_range, l:firstline, l:lastline)
   let l:selection = s:GetSelectionOrRange(l:is_selection, a:uses_range, l:firstline, l:lastline)
 
   let l:config_input = {
-  \  "config_default": g:vim_ai_complete,
+  \  "config_default": a:config_default,
   \  "config_extension": a:config,
   \  "user_instruction": l:instruction,
   \  "user_selection": l:selection,
   \  "is_selection": l:is_selection,
-  \  "command_type": 'complete',
+  \  "command_type": a:command_type,
   \}
   let l:context = py3eval("make_ai_context(unwrap('l:config_input'))")
-  let l:config = l:context['config']
 
-  let s:last_command = "complete"
+  let s:last_command = a:command_type
   let s:last_config = a:config
   let s:last_instruction = l:instruction
   let s:last_uses_range = a:uses_range
@@ -271,16 +280,33 @@ function! vim_ai#AIRun(uses_range, config, ...) range abort
   let s:last_firstline = l:firstline
   let s:last_lastline = l:lastline
 
+  return {
+  \  'context': l:context,
+  \  'is_selection': l:is_selection,
+  \  'firstline': l:firstline,
+  \  'lastline': l:lastline,
+  \}
+endfunction
+
+" Complete prompt
+" - uses_range   - truty if range passed
+" - config       - function scoped vim_ai_complete config
+" - a:1          - optional instruction prompt
+function! vim_ai#AIRun(uses_range, config, ...) range abort
+  let l:run = s:PrepareRun('complete', g:vim_ai_complete, a:uses_range, a:config, a:000, a:firstline, a:lastline)
+  let l:context = l:run.context
+  let l:config = l:context['config']
+
   let l:cursor_on_empty_line = empty(getline('.'))
   try
     call s:set_paste(l:config)
     if l:cursor_on_empty_line
-      execute "normal! " . l:lastline . "GA"
+      execute "normal! " . l:run.lastline . "GA"
     else
-      execute "normal! " . l:lastline . "Go"
+      execute "normal! " . l:run.lastline . "Go"
     endif
     py3 run_ai_completition(unwrap('l:context'))
-    execute "normal! " . l:lastline . "G"
+    execute "normal! " . l:run.lastline . "G"
   finally
     call s:set_nopaste(l:config)
   endtry
@@ -291,35 +317,13 @@ endfunction
 " - config       - function scoped vim_ai_edit config
 " - a:1          - optional instruction prompt
 function! vim_ai#AIEditRun(uses_range, config, ...) range abort
-  call s:ImportPythonModules()
-  let l:instruction = a:0 > 0 ? a:1 : ""
-  let l:firstline = s:redo_selection_hint >= 0 ? s:redo_firstline : a:firstline
-  let l:lastline = s:redo_selection_hint >= 0 ? s:redo_lastline : a:lastline
-  let l:is_selection = s:IsVisualSelectionRange(a:uses_range, l:firstline, l:lastline)
-  let l:selection = s:GetSelectionOrRange(l:is_selection, a:uses_range, l:firstline, l:lastline)
-
-  let l:config_input = {
-  \  "config_default": g:vim_ai_edit,
-  \  "config_extension": a:config,
-  \  "user_instruction": l:instruction,
-  \  "user_selection": l:selection,
-  \  "is_selection": l:is_selection,
-  \  "command_type": 'edit',
-  \}
-  let l:context = py3eval("make_ai_context(unwrap('l:config_input'))")
+  let l:run = s:PrepareRun('edit', g:vim_ai_edit, a:uses_range, a:config, a:000, a:firstline, a:lastline)
+  let l:context = l:run.context
   let l:config = l:context['config']
-
-  let s:last_command = "edit"
-  let s:last_config = a:config
-  let s:last_instruction = l:instruction
-  let s:last_uses_range = a:uses_range
-  let s:last_is_selection = l:is_selection
-  let s:last_firstline = l:firstline
-  let s:last_lastline = l:lastline
 
   try
     call s:set_paste(l:config)
-    call s:SelectSelectionOrRange(l:is_selection, l:firstline, l:lastline)
+    call s:SelectSelectionOrRange(l:run.is_selection, l:run.firstline, l:run.lastline)
     execute "normal! c"
     py3 run_ai_completition(unwrap('l:context'))
   finally
@@ -332,31 +336,8 @@ endfunction
 " - config       - function scoped vim_ai_image config
 " - a:1          - optional instruction prompt
 function! vim_ai#AIImageRun(uses_range, config, ...) range abort
-  call s:ImportPythonModules()
-  let l:instruction = a:0 > 0 ? a:1 : ""
-  let l:firstline = s:redo_selection_hint >= 0 ? s:redo_firstline : a:firstline
-  let l:lastline = s:redo_selection_hint >= 0 ? s:redo_lastline : a:lastline
-  let l:is_selection = s:IsVisualSelectionRange(a:uses_range, l:firstline, l:lastline)
-  let l:selection = s:GetSelectionOrRange(l:is_selection, a:uses_range, l:firstline, l:lastline)
-
-  let l:config_input = {
-  \  "config_default": g:vim_ai_image,
-  \  "config_extension": a:config,
-  \  "user_instruction": l:instruction,
-  \  "user_selection": l:selection,
-  \  "is_selection": l:is_selection,
-  \  "command_type": 'image',
-  \}
-  let l:context = py3eval("make_ai_context(unwrap('l:config_input'))")
-  let l:config = l:context['config']
-
-  let s:last_command = "image"
-  let s:last_config = a:config
-  let s:last_instruction = l:instruction
-  let s:last_uses_range = a:uses_range
-  let s:last_is_selection = l:is_selection
-  let s:last_firstline = l:firstline
-  let s:last_lastline = l:lastline
+  let l:run = s:PrepareRun('image', g:vim_ai_image, a:uses_range, a:config, a:000, a:firstline, a:lastline)
+  let l:context = l:run.context
 
   py3 run_ai_image(unwrap('l:context'))
 endfunction
@@ -400,7 +381,7 @@ function! s:ReuseOrCreateChatWindow(config)
     for i in range(tabpagenr('$'))
       call extend(l:open_buffer_list, tabpagebuflist(i + 1))
     endfor
-    for l:bufnr in reverse(sort(l:open_buffer_list))
+    for l:bufnr in reverse(sort(l:open_buffer_list, 'n'))
       if getbufvar(l:bufnr, "&filetype") ==# "aichat"
         call win_gotoid(win_findbuf(l:bufnr)[0])
         return
@@ -425,18 +406,23 @@ function! s:AIChatUndoCleanup()
   endif
 
   let l:current_line_num = line('.')
-  " navigate to the line where it started generating answer
-  execute l:chat_initiation_line
-  execute 'normal! j'
-  " copy whole assistant message to the `d` register
-  execute 'normal! "dyG'
-  " undo until user message
-  while line('$') > l:chat_initiation_line
-    execute "normal! u"
-  endwhile
-  " paste assistat message as a whole
-  execute 'normal! "dp'
-  execute l:current_line_num
+  let l:saved_register = [getreg('d', 1, 1), getregtype('d')]
+  try
+    " navigate to the line where it started generating answer
+    execute l:chat_initiation_line
+    execute 'normal! j'
+    " copy whole assistant message to the `d` register
+    execute 'normal! "dyG'
+    " undo until user message
+    while line('$') > l:chat_initiation_line
+      execute "normal! u"
+    endwhile
+    " paste assistant message as a whole
+    execute 'normal! "dp'
+    execute l:current_line_num
+  finally
+    call setreg('d', l:saved_register[0], l:saved_register[1])
+  endtry
 
   call setbufvar(l:bufnr, 'vim_ai_chat_start_last_line', -1)
 endfunction
@@ -486,8 +472,9 @@ function! vim_ai#AIChatRun(uses_range, config, ...) range abort
         call setbufvar(l:bufnr, 'vim_ai_chat_start_last_line', line('$'))
         " if user switches to a different buffer, setup autocommand that
         " will clean undo history after returning back
+        " only reset this buffer's autocommand, other chats may be running
         augroup AichatUndo
-          au!
+          autocmd! * <buffer>
           autocmd BufEnter <buffer> call s:AIChatUndoCleanup()
         augroup END
         execute "normal! Go\n<<< answering"
@@ -540,7 +527,7 @@ function! vim_ai#AIChatWatch(bufnr, anim_index, timerid) abort
     " Clear message
     " https://neovim.discourse.group/t/how-to-clear-the-echo-message-in-the-command-line/268/3
     call feedkeys(':','nx')
-  end
+  endif
 
   " if window is visible and user not scrolling, auto-scroll down
   let winid = bufwinid(a:bufnr)
@@ -586,7 +573,7 @@ function! s:RoleCompletion(A, command_type) abort
   call s:ImportPythonModules()
   let l:role_list = py3eval("load_ai_role_names(unwrap('a:command_type'))")
   call map(l:role_list, '"/" . v:val')
-  return filter(l:role_list, 'v:val =~ "^' . a:A . '"')
+  return filter(l:role_list, {_, role -> s:StartsWith(role, a:A)})
 endfunction
 
 function! vim_ai#RoleCompletionComplete(A,L,P) abort
@@ -606,7 +593,7 @@ function! vim_ai#RoleCompletionChat(A,L,P) abort
 endfunction
 
 function! vim_ai#AIUtilRolesOpen() abort
-  execute "e " . g:vim_ai_roles_config_file
+  execute 'edit' fnameescape(expand(g:vim_ai_roles_config_file))
 endfunction
 
 function! vim_ai#AIUtilSetDebug(is_debug) abort

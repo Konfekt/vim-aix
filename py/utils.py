@@ -149,13 +149,12 @@ def encode_image(image_path):
 
 
 def is_image_path(path):
-    ext = path.strip().split('.')[-1]
+    ext = path.strip().split('.')[-1].lower()
     return ext in ['jpg', 'jpeg', 'png', 'gif']
 
 def parse_include_paths(path):
     if not path:
         return []
-    pwd = vim.eval('getcwd()')
 
     path = os.path.expanduser(path)
 
@@ -166,9 +165,9 @@ def parse_include_paths(path):
     return [path for path in expanded_paths if not os.path.isdir(path)]
 
 def make_image_message(path):
-    ext = path.split('.')[-1]
+    ext = path.split('.')[-1].lower()
     base64_image = encode_image(path)
-    return { 'type': 'image_url', 'image_url': { 'url': f"data:image/{ext.replace('.', '')};base64,{base64_image}" } }
+    return { 'type': 'image_url', 'image_url': { 'url': f"data:image/{ext};base64,{base64_image}" } }
 
 def make_text_file_message(path):
     file_content_start = f'==> {path} <==\n'
@@ -181,8 +180,12 @@ def make_text_file_message(path):
         return { 'type': 'text', 'text': file_content_start + 'Binary file, cannot display' + file_content_end }
 
 def make_exec_output_message(cmd, timeout=5):
-    ps = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, shell=True, timeout=timeout)
-    return { 'type': 'text', 'text': f'==> {cmd} <==\n{ps.stdout}' }
+    try:
+        ps = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, shell=True, timeout=timeout)
+        output = ps.stdout.decode('utf-8', errors='replace')
+    except subprocess.TimeoutExpired:
+        output = f'Command timed out after {timeout} seconds'
+    return { 'type': 'text', 'text': f'==> {cmd} <==\n{output}' }
 
 def parse_chat_messages(chat_content):
     lines = chat_content.splitlines()
@@ -281,7 +284,7 @@ def parse_chat_header_config():
                         value = value.split('\\n')
                     config[base][option_key] = value
         return config
-    except:
+    except Exception:
         raise Exception("Invalid [chat] config")
 
 def vim_break_undo_sequence():
@@ -299,8 +302,8 @@ def parse_error_message(error):
     try:
         parsed = json.loads(error.read().decode())
         return parsed["error"]["message"]
-    except:
-        pass
+    except Exception:
+        return None
 
 def handle_completion_error(provider, error):
     # nvim throws - pynvim.api.common.NvimError: Keyboard interrupt
@@ -331,10 +334,9 @@ def clear_echo_message():
 def enhance_roles_with_custom_function(roles):
     if vim.eval("exists('g:vim_ai_roles_config_function')") == '1':
         roles_config_function = vim.eval("g:vim_ai_roles_config_function")
-        if not vim.eval("exists('*" + roles_config_function + "')"):
+        if vim.eval("exists('*" + roles_config_function + "')") != '1':
             raise Exception(f"Role config function does not exist: {roles_config_function}")
-        else:
-            roles.update(vim.eval(roles_config_function + "()"))
+        roles.update(vim.eval(roles_config_function + "()"))
 
 def _parse_markdown_frontmatter(content, role_file_path):
     lines = content.splitlines()
@@ -406,7 +408,10 @@ def _as_system_initial_prompt(text):
     return f">>> system\n\n{text}"
 
 def _apply_role_header(sections, role_name, header):
-    for key, value in header.items():
+    # Apply `model` first so an explicit reasoning_effort wins over the effort
+    # suffix of the model id regardless of key order.
+    items = sorted(header.items(), key=lambda item: item[0].split('.')[-1] != 'model')
+    for key, value in items:
         section_name, parsed_key = _make_markdown_section_name(role_name, key)
         if not section_name in sections:
             sections[section_name] = {}
@@ -502,20 +507,13 @@ def _parse_llm_template_file(role_name, role_file_path):
 
     _apply_role_header(sections, role_name, header)
 
-    prompt = data.get('system')
-    if prompt is None:
-        prompt = data.get('prompt')
+    # `system` becomes the initial system prompt, `prompt` the role prompt
+    system = data.get('system')
+    if system is not None:
+        _apply_role_prompt(sections, role_name, str(system))
+    prompt = data.get('prompt')
     if isinstance(prompt, str):
-        if data.get('system') is not None:
-            _apply_role_prompt(sections, role_name, prompt)
-        else:
-            sections[role_name]['prompt'] = prompt.strip()
-    elif data.get('system') is not None:
-        _apply_role_prompt(sections, role_name, str(prompt))
-
-    # bare `prompt:` with system already set — keep as role prompt field
-    if isinstance(data.get('prompt'), str) and data.get('system') is not None:
-        sections[role_name]['prompt'] = data['prompt'].strip()
+        sections[role_name]['prompt'] = prompt.strip()
 
     if not sections[role_name]:
         # empty section not useful
@@ -622,9 +620,8 @@ def read_role_files():
     return roles
 
 def save_b64_to_file(path, b64_data):
-    f = open(path, "wb")
-    f.write(base64.b64decode(b64_data))
-    f.close()
+    with open(path, "wb") as file:
+        file.write(base64.b64decode(b64_data))
 
 def load_provider(provider_name):
     try:
